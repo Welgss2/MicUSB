@@ -18,7 +18,9 @@ struct ContentView: View {
                     .onChange(of: streamer.selectedMicrophoneID) { newID in
                         streamer.selectMicrophone(newID)
                     }
-                    Text("Escolha a direção do microfone. Selecione a que aponta para sua voz.")
+                    Text(streamer.selectedMicrophoneID == "auto"
+                         ? "Recomendado: o iPhone escolhe a matriz de microfones e aplica processamento de voz."
+                         : "Modo manual: usa uma fonte interna. Aponte essa direção para sua voz.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }

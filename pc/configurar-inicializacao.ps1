@@ -12,4 +12,4 @@ $command = '"{0}" "{1}" --minimized' -f $pyw, $scriptPath
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 New-Item -Path $runKey -Force | Out-Null
 New-ItemProperty -Path $runKey -Name 'MicUSB' -Value $command -PropertyType String -Force | Out-Null
-Write-Host 'MicUSB configurado para iniciar minimizado com o Windows.'
+Write-Host 'MicUSB configurado para iniciar em segundo plano com o Windows.'

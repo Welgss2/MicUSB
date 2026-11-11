@@ -1,3 +1,2 @@
 @echo off
-start "" /b pyw "%~dp0micusb.py"
-exit /b
+start "" wscript.exe "%~dp0iniciar.vbs"

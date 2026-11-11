@@ -13,7 +13,7 @@ final class MicStreamer: ObservableObject {
     @Published var clients = 0
     @Published var running = false
     @Published var microphoneOptions: [MicrophoneOption] = []
-    @Published var selectedMicrophoneID = UserDefaults.standard.string(forKey: "MicUSB.selectedMic") ?? ""
+    @Published var selectedMicrophoneID = UserDefaults.standard.string(forKey: "MicUSB.selectedMic") ?? "auto"
 
     static let port: NWEndpoint.Port = 5000
     private let engine = AVAudioEngine()
@@ -32,10 +32,11 @@ final class MicStreamer: ObservableObject {
     private func begin() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .measurement, options: [])
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker])
             try session.setPreferredSampleRate(48000)
             try session.setActive(true)
             try configureBuiltInMicrophone(session)
+            try engine.inputNode.setVoiceProcessingEnabled(true)
             try startListener()
             try installCaptureTap()
             running = true
@@ -47,14 +48,14 @@ final class MicStreamer: ObservableObject {
 
     private func configureBuiltInMicrophone(_ session: AVAudioSession) throws {
         guard let mic = session.availableInputs?.first(where: { $0.portType == .builtInMic }) else {
-            microphoneOptions = [MicrophoneOption(id: "auto", name: "Automático (iOS)")]
+            microphoneOptions = [MicrophoneOption(id: "auto", name: "Automático — processamento de voz do iPhone")]
             selectedMicrophoneID = "auto"
             return
         }
 
         try session.setPreferredInput(mic)
         let sources = mic.dataSources ?? []
-        microphoneOptions = sources.enumerated().map { index, source in
+        microphoneOptions = [MicrophoneOption(id: "auto", name: "Automático — matriz e isolamento de voz do iOS")] + sources.enumerated().map { index, source in
             let raw = source.dataSourceName
             let key = raw.lowercased()
             let friendly: String
@@ -75,6 +76,13 @@ final class MicStreamer: ObservableObject {
             selectedMicrophoneID = "auto"
             return
         }
+        if selectedMicrophoneID == "auto" {
+            // Let iOS choose the built-in microphone array/beamformer for voice capture.
+            try mic.setPreferredDataSource(nil)
+            UserDefaults.standard.set("auto", forKey: "MicUSB.selectedMic")
+            return
+        }
+
         let chosen = sources.first(where: { $0.dataSourceID.stringValue == selectedMicrophoneID }) ?? sources[0]
         if chosen.supportedPolarPatterns?.contains(.cardioid) == true {
             try chosen.setPreferredPolarPattern(.cardioid)
