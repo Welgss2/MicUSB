@@ -18,5 +18,15 @@ PARTE 3 - No PC
 1. Instale o VB-Cable: vb-audio.com/Cable (reinicie o PC).
 2. Instale o Python (python.org, marque "Add to PATH").
 3. Execute pc\instalar.bat (uma vez).
-4. Abra o app MicUSB no iPhone (ele inicia sozinho), depois execute pc\iniciar.bat.
-5. Nos programas (Discord, OBS, Zoom...) escolha "CABLE Output" como microfone.
+4. Execute pc\iniciar.bat para abrir o painel de controle. Na primeira vez, o filtro pode baixar o modelo DeepFilterNet3.
+5. Abra o app MicUSB no iPhone. O painel do PC mostrará quando conectar.
+6. Nos programas (Discord, OBS, Zoom...) escolha "CABLE Output" como microfone.
+
+TRATAMENTO DE VOZ
+- No painel do PC, Ganho automático pode elevar a fala baixa até o limite escolhido; Ganho de voz ajusta o nível manual em dB; Corte de fundo (gate) reduz sinais abaixo do limite em dBFS; Brilho/Suavidade reduz agudos estridentes; Leve/Média/Forte controla a redução da IA; Filtro de graves liga/desliga o passa-altas; e o medidor exibe dBFS.
+- No iPhone, o seletor Microfone do iPhone permite escolher as fontes que o iOS disponibiliza (normalmente base, frente/tela e traseira/câmeras). Algumas também aceitam captação direcional cardioide. O seletor pode reiniciar brevemente o fluxo USB ao aplicar a troca.
+- Ganho automático ajuda com voz baixa, mas não recupera detalhes perdidos ao falar de longe. Para melhor relação voz/TV, deixe o lado do microfone escolhido apontado para a boca e aproxime o telefone quando possível.
+- O programa usa DeepFilterNet3 para reduzir ruído, corta graves abaixo de ~100 Hz quando ativado e aplica ganho de voz com limitador.
+- Na primeira execução, o modelo pode ser baixado e armazenado no PC. É gratuito e processa o áudio localmente.
+- O filtro melhora ruído contínuo e parte do som de TV, mas não promete remover fala da TV perfeitamente. Para melhor resultado, aproxime o iPhone da boca e diminua a TV.
+- O controle Cancelar eco aparece desativado porque o túnel USB ainda não envia uma referência sincronizada do áudio tocado no PC. Use fones para evitar que o som dos alto-falantes volte ao microfone.

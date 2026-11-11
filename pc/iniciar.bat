@@ -1,3 +1,3 @@
 @echo off
-py "%~dp0micusb.py"
-pause
+@echo off
+start "MicUSB - Controle de voz" pyw "%~dp0micusb.py"
