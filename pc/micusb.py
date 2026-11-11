@@ -8,7 +8,7 @@ import sounddevice as sd
 
 PORT = 5000
 RATE = 48000
-OUT_NAME = "CABLE Input"   # saída do VB-Cable; nos apps escolha "CABLE Output" como microfone
+OUT_NAME = "CABLE In"      # nome atual do endpoint VB-CABLE; nos apps use "CABLE Output" como microfone
 
 
 def find_output():
