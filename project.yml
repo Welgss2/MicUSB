@@ -1,0 +1,24 @@
+name: MicUSB
+options:
+  bundleIdPrefix: com.welgss
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  MicUSB:
+    type: application
+    platform: iOS
+    sources: [MicUSB]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.welgss.micusb
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+    info:
+      path: MicUSB/Info.plist
+      properties:
+        CFBundleDisplayName: MicUSB
+        NSMicrophoneUsageDescription: "Envia o áudio do microfone ao PC pelo cabo USB."
+        UIBackgroundModes: [audio]
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]

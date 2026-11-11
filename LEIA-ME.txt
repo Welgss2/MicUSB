@@ -1,0 +1,22 @@
+MicUSB - microfone do iPhone no Windows pelo cabo (sem rede)
+
+PARTE 1 - Gerar o app do iPhone (uma vez)
+1. Crie conta gratuita em github.com e um repositório NOVO e PÚBLICO (macOS é grátis em repo público).
+2. Envie TODOS os arquivos desta pasta para o repositório (Add file > Upload files).
+   Importante: a pasta .github precisa subir junto (arraste a pasta inteira).
+3. Aba Actions > "Build IPA" > Run workflow. Espere ~3-5 min.
+4. Quando ficar verde, abra a execução e baixe o artefato "MicUSB-ipa" (zip). Dentro está MicUSB.ipa.
+
+PARTE 2 - Instalar no iPhone
+1. Baixe o Sideloadly (sideloadly.io) e instale.
+2. iPhone no cabo, "Confiar". Arraste MicUSB.ipa no Sideloadly, coloque seu Apple ID, Start.
+3. No iPhone: Ajustes > Geral > VPN e Gestão de Dispositivo > confie no seu Apple ID.
+   (iPhone com iOS 16+: ative também Modo Desenvolvedor em Ajustes > Privacidade e Segurança.)
+4. Com Apple ID gratuito o app expira em 7 dias: repita o Sideloadly para renovar.
+
+PARTE 3 - No PC
+1. Instale o VB-Cable: vb-audio.com/Cable (reinicie o PC).
+2. Instale o Python (python.org, marque "Add to PATH").
+3. Execute pc\instalar.bat (uma vez).
+4. Abra o app MicUSB no iPhone (ele inicia sozinho), depois execute pc\iniciar.bat.
+5. Nos programas (Discord, OBS, Zoom...) escolha "CABLE Output" como microfone.
