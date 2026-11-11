@@ -17,8 +17,8 @@ PARTE 2 - Instalar no iPhone
 PARTE 3 - No PC
 1. Instale o VB-Cable: vb-audio.com/Cable (reinicie o PC).
 2. Instale o Python (python.org, marque "Add to PATH").
-3. Execute pc\instalar.bat (uma vez).
-4. Execute pc\iniciar.bat para abrir o painel de controle. Na primeira vez, o filtro pode baixar o modelo DeepFilterNet3.
+3. Execute pc\instalar.bat (uma vez). Isso instala as dependências e configura o MicUSB para iniciar minimizado quando você entrar no Windows.
+4. Execute pc\iniciar.bat para abrir o painel de controle sem deixar uma janela de terminal aberta. Ao fechar no X, ele continua na bandeja de ícones ocultos; clique no ícone para reabrir ou escolha Sair para encerrar. Na primeira vez, o filtro pode baixar o modelo DeepFilterNet3.
 5. Abra o app MicUSB no iPhone. O painel do PC mostrará quando conectar.
 6. Nos programas (Discord, OBS, Zoom...) escolha "CABLE Output" como microfone.
 
@@ -30,3 +30,5 @@ TRATAMENTO DE VOZ
 - Na primeira execução, o modelo pode ser baixado e armazenado no PC. É gratuito e processa o áudio localmente.
 - O filtro melhora ruído contínuo e parte do som de TV, mas não promete remover fala da TV perfeitamente. Para melhor resultado, aproxime o iPhone da boca e diminua a TV.
 - O controle Cancelar eco aparece desativado porque o túnel USB ainda não envia uma referência sincronizada do áudio tocado no PC. Use fones para evitar que o som dos alto-falantes volte ao microfone.
+- O MicUSB inicia junto com sua sessão do Windows após rodar instalar.bat. O iPhone precisa estar conectado e com o app aberto para transmitir; se fechar o app da bandeja, a captura para.
+- A captura e a saída de áudio usam blocos menores para reduzir o atraso. A redução por IA ainda adiciona latência própria do processamento.

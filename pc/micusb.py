@@ -8,6 +8,9 @@ import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox
+import argparse
+import pystray
+from PIL import Image, ImageDraw
 
 import numpy as np
 import sounddevice as sd
@@ -16,12 +19,12 @@ from deepfilter_stream import DeepFilterModel
 PORT = 5000
 RATE = 48000
 OUT_NAME = "CABLE In"
-BG = "#111113"
-CARD = "#1b1b1e"
-CARD2 = "#141416"
-TEXT = "#f5f5f7"
-MUTED = "#a1a1aa"
-ACCENT = "#19b58b"
+BG = "#101719"
+CARD = "#182326"
+CARD2 = "#202e31"
+TEXT = "#f1f7f5"
+MUTED = "#9aadaa"
+ACCENT = "#42d6ae"
 
 
 class VoiceProcessor:
@@ -146,14 +149,16 @@ def start_forward():
 
 
 class MicUSBApp:
-    def __init__(self, root):
+    def __init__(self, root, start_hidden=False):
         self.root = root
         self.root.title("MicUSB — Controle de voz")
-        self.root.geometry("500x760")
-        self.root.minsize(460, 700)
+        self.root.geometry("540x820")
+        self.root.minsize(480, 650)
         self.root.configure(bg=BG)
         self.events = queue.Queue()
         self.alive = True
+        self.start_hidden = start_hidden
+        self.tray_icon = None
         self.processor = None
         self.forwarder = None
         self.stream_thread = None
@@ -172,26 +177,53 @@ class MicUSBApp:
         threading.Thread(target=self._initialize, daemon=True).start()
         self.root.after(100, self._poll)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self._start_tray()
+        if self.start_hidden:
+            self.root.after(350, self.root.withdraw)
 
     def _build_ui(self):
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Mic.Horizontal.TScale", background=CARD, troughcolor="#303034", sliderthickness=14)
-        style.configure("Mic.Horizontal.TProgressbar", troughcolor="#303034", background=ACCENT, bordercolor="#303034", lightcolor=ACCENT, darkcolor=ACCENT)
-        outer = tk.Frame(self.root, bg=BG, padx=16, pady=14)
-        outer.pack(fill="both", expand=True)
-        tk.Label(outer, text="MICUSB", bg=BG, fg=TEXT, font=("Segoe UI", 17, "bold")).pack(anchor="w")
-        tk.Label(outer, textvariable=self.status, bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(2, 12))
+        style.configure("Mic.Horizontal.TScale", background=CARD, troughcolor="#344346", sliderthickness=16)
+        style.configure("Mic.Horizontal.TProgressbar", troughcolor="#344346", background=ACCENT, bordercolor="#344346", lightcolor=ACCENT, darkcolor=ACCENT)
+        shell = tk.Frame(self.root, bg=BG)
+        shell.pack(fill="both", expand=True)
+        canvas = tk.Canvas(shell, bg=BG, highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(shell, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        outer = tk.Frame(canvas, bg=BG, padx=22, pady=20)
+        window_id = canvas.create_window((0, 0), window=outer, anchor="nw")
+        outer.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window_id, width=event.width))
+        canvas.bind_all("<MouseWheel>", lambda event: canvas.yview_scroll(-1 * int(event.delta / 120), "units"))
+
+        brand = tk.Frame(outer, bg=BG)
+        brand.pack(fill="x", pady=(0, 18))
+        mark = tk.Canvas(brand, width=54, height=54, bg=BG, highlightthickness=0)
+        mark.pack(side="left", padx=(0, 12))
+        mark.create_rounded_rectangle = None
+        mark.create_oval(2, 2, 52, 52, fill=ACCENT, outline="")
+        mark.create_rectangle(24, 12, 30, 32, fill="#10201e", outline="")
+        mark.create_arc(16, 22, 38, 44, start=180, extent=180, style="arc", outline="#10201e", width=3)
+        mark.create_line(27, 41, 27, 46, fill="#10201e", width=3)
+        tk.Label(brand, text="MicUSB", bg=BG, fg=TEXT, font=("Segoe UI Variable Display", 21, "bold")).pack(anchor="w", pady=(1, 0))
+        tk.Label(brand, text="Áudio do iPhone, tratado no PC", bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w")
+        status_bar = tk.Frame(outer, bg=CARD2, padx=12, pady=10)
+        status_bar.pack(fill="x", pady=(0, 16))
+        tk.Label(status_bar, text="●", bg=CARD2, fg=ACCENT, font=("Segoe UI", 11)).pack(side="left", padx=(0, 8))
+        tk.Label(status_bar, textvariable=self.status, bg=CARD2, fg=TEXT, font=("Segoe UI", 9)).pack(side="left", fill="x")
 
         mic = self._card(outer, "MICROFONE")
-        tk.Label(mic, text="Fonte: Microfone do iPhone pelo USB", bg=CARD, fg=TEXT, font=("Segoe UI", 10)).pack(anchor="w", padx=14, pady=(6, 12))
+        tk.Label(mic, text="Entrada de áudio • iPhone conectado por USB", bg=CARD, fg=TEXT, font=("Segoe UI", 10)).pack(anchor="w", padx=14, pady=(6, 12))
         self._slider(mic, "Ganho de voz", self.gain_db, -12, 24, " dB", self._set_gain)
         self._slider(mic, "Ganho automático (máx.)", self.auto_gain_db, 0, 18, " dB", self._set_auto_gain)
         meter_row = tk.Frame(mic, bg=CARD2, padx=12, pady=10)
         meter_row.pack(fill="x", padx=14, pady=(8, 12))
         self.meter = ttk.Progressbar(meter_row, maximum=60, variable=self.level, style="Mic.Horizontal.TProgressbar")
         self.meter.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        tk.Button(meter_row, text="Testar", command=self._test, bg="#29292d", fg=TEXT, activebackground="#3a3a3f", activeforeground=TEXT, relief="flat", padx=14, pady=7).pack(side="right")
+        tk.Button(meter_row, text="Testar voz", command=self._test, bg=ACCENT, fg="#10201e", activebackground="#6be4c4", activeforeground="#10201e", relief="flat", padx=14, pady=7, font=("Segoe UI", 9, "bold"), cursor="hand2").pack(side="right")
         tk.Label(meter_row, textvariable=self.level_text, bg=CARD2, fg=MUTED, font=("Segoe UI", 8, "bold")).pack(side="right", padx=(0, 8))
         tk.Label(mic, textvariable=self.test_text, bg=CARD, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", padx=14, pady=(0, 12))
         self._slider(mic, "Corte de fundo (gate)", self.gate_db, -80, -30, " dB", self._set_gate)
@@ -208,13 +240,12 @@ class MicUSBApp:
             button = tk.Radiobutton(choices, text=option, value=option, variable=self.strength, command=self._set_strength, indicatoron=False, bg=CARD2, fg=MUTED, selectcolor="#252529", activebackground="#252529", activeforeground=TEXT, font=("Segoe UI", 9, "bold"), relief="flat", padx=10, pady=9)
             button.pack(side="left", fill="x", expand=True, padx=4)
         self._toggle(filt, "Filtro de graves", "Corta vibração, vento e ruído grave", self.hpf_enabled, self._set_hpf)
-        self._toggle(filt, "Cancelar eco", "Requer referência sincronizada da saída do PC", self.echo_enabled, self._set_echo, disabled=True)
-        tk.Label(filt, text="O cancelamento de eco ficará disponível quando houver referência de áudio sincronizada. Para evitar eco acústico, use fones.", bg=CARD, fg=MUTED, font=("Segoe UI", 8), wraplength=430, justify="left").pack(anchor="w", padx=14, pady=(2, 12))
+        tk.Label(filt, text="Para evitar que o som dos alto-falantes volte ao microfone, use fones.", bg=CARD, fg=MUTED, font=("Segoe UI", 8), wraplength=440, justify="left").pack(anchor="w", padx=14, pady=(2, 12))
 
         tk.Label(outer, text="Saída do PC: CABLE Input → nos apps escolha CABLE Output", bg=BG, fg=MUTED, font=("Segoe UI", 8), wraplength=450, justify="left").pack(anchor="w", pady=(10, 0))
 
     def _card(self, parent, title):
-        box = tk.Frame(parent, bg=CARD, padx=8, pady=8)
+        box = tk.Frame(parent, bg=CARD, padx=8, pady=8, highlightthickness=1, highlightbackground="#28373a")
         box.pack(fill="x", pady=(0, 12))
         tk.Label(box, text=title, bg=CARD, fg=MUTED, font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=6, pady=(2, 4))
         return box
@@ -238,7 +269,7 @@ class MicUSBApp:
         texts.pack(side="left", fill="x", expand=True)
         tk.Label(texts, text=title, bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold")).pack(anchor="w")
         tk.Label(texts, text=subtitle, bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w")
-        toggle = tk.Checkbutton(row, variable=variable, command=callback, state="disabled" if disabled else "normal", bg=CARD, fg=ACCENT, selectcolor=CARD2, activebackground=CARD, activeforeground=ACCENT, disabledforeground="#66666b")
+        toggle = tk.Checkbutton(row, variable=variable, command=callback, state="disabled" if disabled else "normal", bg=CARD, fg=ACCENT, selectcolor=CARD2, activebackground=CARD, activeforeground=ACCENT, disabledforeground="#66666b", cursor="hand2")
         toggle.pack(side="right")
 
     def _initialize(self):
@@ -274,11 +305,12 @@ class MicUSBApp:
         with socket.create_connection(("127.0.0.1", PORT), timeout=3) as sock:
             sock.settimeout(5)
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            with sd.RawOutputStream(samplerate=RATE, channels=1, dtype="int16", device=device, latency="low") as out:
+            with sd.RawOutputStream(samplerate=RATE, channels=1, dtype="int16", device=device, latency="low", blocksize=512) as out:
                 self.events.put(("status", "Conectado — tratamento de voz ativo"))
                 pending = b""
                 while self.alive:
-                    data = sock.recv(4096)
+                    # Read one 512-sample mono frame (10.7 ms at 48 kHz) at a time.
+                    data = sock.recv(1024)
                     if not data:
                         break
                     data = pending + data
@@ -349,16 +381,54 @@ class MicUSBApp:
             self._show_test_result()
         self.root.after(100, self._poll)
 
+    def _start_tray(self):
+        image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle((5, 5, 59, 59), radius=14, fill=ACCENT)
+        draw.rectangle((29, 16, 35, 39), fill="white")
+        draw.ellipse((21, 29, 43, 51), outline="white", width=4)
+        draw.rectangle((30, 48, 34, 54), fill="white")
+        menu = pystray.Menu(
+            pystray.MenuItem("Abrir MicUSB", self._tray_show, default=True),
+            pystray.MenuItem("Sair", self._tray_quit),
+        )
+        self.tray_icon = pystray.Icon("MicUSB", image, "MicUSB — microfone ativo", menu)
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+
+    def _tray_show(self, _icon=None, _item=None):
+        self.root.after(0, self._show_window)
+
+    def _show_window(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def _tray_quit(self, _icon=None, _item=None):
+        self.root.after(0, self.quit)
+
     def close(self):
+        # Fechar a janela mantém o áudio ativo; use Sair na bandeja para encerrar.
+        self.root.withdraw()
+
+    def quit(self):
         self.alive = False
         if self.forwarder and self.forwarder.poll() is None:
             self.forwarder.terminate()
+        if self.tray_icon:
+            self.tray_icon.stop()
         self.root.destroy()
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--minimized", action="store_true")
+    args = parser.parse_args()
     root = tk.Tk()
-    MicUSBApp(root)
+    try:
+        root.iconbitmap(default=str(__import__("pathlib").Path(__file__).with_name("micusb.ico")))
+    except tk.TclError:
+        pass
+    MicUSBApp(root, start_hidden=args.minimized)
     root.mainloop()
 
 

@@ -94,7 +94,8 @@ final class MicStreamer: ObservableObject {
                           userInfo: [NSLocalizedDescriptionKey: "Erro ao configurar o conversor de áudio"])
         }
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: inFormat) { [weak self] buf, _ in
+        // One DeepFilterNet frame (512 samples at 48 kHz) reduces capture buffering to ~10.7 ms.
+        input.installTap(onBus: 0, bufferSize: 512, format: inFormat) { [weak self] buf, _ in
             guard let self = self else { return }
             let ratio = outFormat.sampleRate / inFormat.sampleRate
             let cap = AVAudioFrameCount(Double(buf.frameLength) * ratio) + 32
