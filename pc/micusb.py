@@ -111,28 +111,16 @@ class VoiceProcessor:
             self.test_result = self._test_peak
             self._test_until = 0.0
 
-        # A lower opening threshold preserves quiet syllables. Once open, use
-        # 3 dB hysteresis and a longer hold to avoid chopping word endings.
-        close_threshold = self.gate_db - 3.0
-        if level_db >= self.gate_db or (self.gate_open and level_db >= close_threshold):
-            self.gate_open = True
-            self.gate_hold_until = now + 0.18
-        elif now >= self.gate_hold_until:
-            self.gate_open = False
-        voice_active = self.gate_open
-        target = 1.0 if voice_active else 0.0
-        attack = math.exp(-1.0 / (0.005 * RATE))
-        release = math.exp(-1.0 / (0.060 * RATE))
-        gated = np.empty_like(clean)
-        gain = self.gate_gain
-        for i, sample in enumerate(clean):
-            coeff = attack if target > gain else release
-            gain = target + coeff * (gain - target)
-            gated[i] = sample * gain
-        if not voice_active and gain < 0.012:
-            gated.fill(0.0)
-            gain = 0.0
-        self.gate_gain = gain
+        # Strict gate tied to the same post-treatment dBFS shown by the meter.
+        # No hold, hysteresis or gain smoothing: below the selected threshold,
+        # this frame is silent. Continue feeding the denoiser above to retain state.
+        voice_active = level_db >= self.gate_db
+        self.gate_open = voice_active
+        if not voice_active:
+            self.gate_gain = 0.0
+            self.auto_gain = 1.0
+            return bytes(len(pcm))
+        gated = clean
         # Slow, capped AGC raises quieter speech after denoising; it rests during silence.
         gated_rms = float(np.sqrt(np.mean(gated * gated) + 1e-12))
         auto_target = 1.0
@@ -194,9 +182,9 @@ class MicUSBApp:
         self.level_text = tk.StringVar(value="-120 dBFS")
         self.volume_percent = tk.DoubleVar(value=125)
         self.auto_gain_db = tk.DoubleVar(value=18)
-        self.gate_sensitivity = tk.DoubleVar(value=44)
-        self.gate_db = tk.DoubleVar(value=self.sensitivity_to_db(44))
-        self.gate_threshold_text = tk.StringVar(value=f"Abaixo de {self.sensitivity_to_db(44):.0f} dBFS: silenciado")
+        self.gate_sensitivity = tk.DoubleVar(value=0)
+        self.gate_db = tk.DoubleVar(value=self.sensitivity_to_db(0))
+        self.gate_threshold_text = tk.StringVar(value=f"Abaixo de {self.sensitivity_to_db(0):.0f} dBFS: silenciado")
         self._meter_db = -120.0
         self.treble_db = tk.DoubleVar(value=-1.0)
         self.strength = tk.StringVar(value="Equilibrado")
@@ -290,7 +278,7 @@ class MicUSBApp:
 
         self._slider(mic, "Ganho automático (máx.)", self.auto_gain_db, 0, 18, " dB", self._set_auto_gain)
         self._slider(mic, "Brilho / suavidade", self.treble_db, -8, 3, " dB", self._set_treble)
-        tk.Label(mic, text="Se sua voz for cortada, diminua a Sensibilidade. O ganho aumenta sua voz e o ruído juntos; TV falando pode atravessar o filtro.", bg=CARD, fg=MUTED, font=("Segoe UI", 8), wraplength=460, justify="left").pack(fill="x", padx=14, pady=(0, 10))
+        tk.Label(mic, text="O medidor e o corte usam o mesmo dBFS. Abaixo do limite definido, o áudio inteiro é silenciado imediatamente.", bg=CARD, fg=MUTED, font=("Segoe UI", 8), wraplength=460, justify="left").pack(fill="x", padx=14, pady=(0, 10))
 
         tk.Label(outer, text="Tratamento", bg=BG, fg=TEXT, font=("Segoe UI Variable Display", 17, "bold")).pack(anchor="w", pady=(3, 2))
         tk.Label(outer, text="Processado localmente no PC", bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 10))
