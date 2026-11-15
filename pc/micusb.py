@@ -36,20 +36,16 @@ class VoiceProcessor:
     def __init__(self, on_level=None):
         self.model = DeepFilterModel(intra_op_num_threads=1)
         self._lock = threading.Lock()
-        # Prefer speech fidelity by default; very high attenuation made voices
-        # thin and warbly while still allowing intelligible TV speech through.
         self._strength = "Equilibrado"
         self._attenuation = {"Natural": 8.0, "Equilibrado": 16.0, "TV alta": 24.0}
         self.denoiser = self.model.new_stream(atten_lim_db=self._attenuation[self._strength])
-        self.gain_db = 0.0
+        self.gain_db = 3.0
         self.auto_gain_max_db = 12.0
         self.auto_gain = 1.0
         self.limiter_gain = 1.0
-        self.gate_db = -55.0
-        self.gate_gain = 0.0
-        self.gate_open = False
-        self.gate_hold_until = 0.0
-        self.treble_db = -1.0
+        self.gate_db = -65.0
+        self.gate_gain = 1.0
+        self.treble_db = -2.5
         self.tone_lp = 0.0
         self.tone_alpha = 1.0 - math.exp(-2.0 * math.pi * 3600 / RATE)
         self.hpf_enabled = True
@@ -99,10 +95,8 @@ class VoiceProcessor:
         high_gain = 10.0 ** (self.treble_db / 20.0)
         clean = low + (clean - low) * high_gain
 
-        rms = float(np.sqrt(np.mean(clean * clean) + 1e-20))
-        # Keep the true floor for the gate. Clamping at -60 dB made a -65 dB
-        # threshold impossible to cross, so the old gate stayed open in silence.
-        level_db = max(-120.0, 20.0 * math.log10(max(rms, 1e-12)))
+        rms = float(np.sqrt(np.mean(clean * clean) + 1e-12))
+        level_db = max(-60.0, 20.0 * math.log10(max(rms, 1e-6)))
         self.on_level(level_db)
         now = time.monotonic()
         if now < self._test_until:
@@ -111,16 +105,17 @@ class VoiceProcessor:
             self.test_result = self._test_peak
             self._test_until = 0.0
 
-        # Strict gate tied to the same post-treatment dBFS shown by the meter.
-        # No hold, hysteresis or gain smoothing: below the selected threshold,
-        # this frame is silent. Continue feeding the denoiser above to retain state.
         voice_active = level_db >= self.gate_db
-        self.gate_open = voice_active
-        if not voice_active:
-            self.gate_gain = 0.0
-            self.auto_gain = 1.0
-            return bytes(len(pcm))
-        gated = clean
+        target = 1.0 if voice_active else 0.025
+        attack = math.exp(-1.0 / (0.008 * RATE))
+        release = math.exp(-1.0 / (0.090 * RATE))
+        gated = np.empty_like(clean)
+        gain = self.gate_gain
+        for i, sample in enumerate(clean):
+            coeff = attack if target > gain else release
+            gain = target + coeff * (gain - target)
+            gated[i] = sample * gain
+        self.gate_gain = gain
         # Slow, capped AGC raises quieter speech after denoising; it rests during silence.
         gated_rms = float(np.sqrt(np.mean(gated * gated) + 1e-12))
         auto_target = 1.0
@@ -179,26 +174,18 @@ class MicUSBApp:
         self.forwarder = None
         self.stream_thread = None
         self.level = tk.DoubleVar(value=0)
-        self.level_text = tk.StringVar(value="-120 dBFS")
-        self.volume_percent = tk.DoubleVar(value=125)
-        self.auto_gain_db = tk.DoubleVar(value=18)
-        self.gate_sensitivity = tk.DoubleVar(value=0)
-        self.gate_db = tk.DoubleVar(value=self.sensitivity_to_db(0))
-        self.gate_threshold_text = tk.StringVar(value=f"Abaixo de {self.sensitivity_to_db(0):.0f} dBFS: silenciado")
-        self._meter_db = -120.0
-        self.treble_db = tk.DoubleVar(value=-1.0)
+        self.level_text = tk.StringVar(value="-60 dBFS")
+        self.gain_db = tk.DoubleVar(value=3)
+        self.auto_gain_db = tk.DoubleVar(value=12)
+        self.gate_db = tk.DoubleVar(value=-65)
+        self.treble_db = tk.DoubleVar(value=-2.5)
         self.strength = tk.StringVar(value="Equilibrado")
         self.hpf_enabled = tk.BooleanVar(value=True)
         self.echo_enabled = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Iniciando filtro de áudio…")
         self.test_text = tk.StringVar(value="Fale para testar o nível")
         self._build_ui()
-        self._initial_gain_db = -120.0 if self.volume_percent.get() <= 0 else 20.0 * math.log10(self.volume_percent.get() / 100.0)
-        self._initial_gate_db = float(self.gate_db.get())
-        self._initial_auto_gain_db = float(self.auto_gain_db.get())
-        self._initial_treble_db = float(self.treble_db.get())
-        self._initial_hpf_enabled = bool(self.hpf_enabled.get())
-        self.root.after(250, self._enable_taskbar_entry)
+        self.root.after_idle(self._enable_taskbar_entry)
         threading.Thread(target=self._initialize, daemon=True).start()
         self.root.after(100, self._poll)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -237,48 +224,21 @@ class MicUSBApp:
         self.status_dot.pack(side="left", padx=(0, 8))
         tk.Label(status_bar, textvariable=self.status, bg=BAR, fg=TEXT, font=("Segoe UI", 9)).pack(side="left", fill="x")
 
-        mic = self._card(outer, "MICROFONE")
-        volume_row = tk.Frame(mic, bg=CARD)
-        volume_row.pack(fill="x", padx=14, pady=(7, 1))
-        mic_mark = tk.Canvas(volume_row, width=30, height=30, bg=CARD2, highlightthickness=0)
-        mic_mark.pack(side="left", padx=(0, 9))
-        mic_mark.create_rounded_rectangle = None
-        mic_mark.create_rectangle(13, 6, 17, 17, fill=TEXT, outline="")
-        mic_mark.create_arc(9, 10, 21, 23, start=180, extent=180, style="arc", outline=TEXT, width=2)
-        mic_mark.create_line(15, 22, 15, 25, fill=TEXT, width=2)
-        tk.Label(volume_row, text="Volume", bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold")).pack(side="left")
-        self.volume_value = tk.Label(volume_row, text="100%", bg=CARD, fg=MUTED, font=("Segoe UI", 9, "bold"))
-        self.volume_value.pack(side="right")
-        self._volume_scale = ttk.Scale(mic, from_=0, to=200, variable=self.volume_percent,
-                                       command=self._volume_changed, style="Mic.Horizontal.TScale")
-        self._volume_scale.pack(fill="x", padx=14, pady=(0, 12))
-
-        meter_row = tk.Frame(mic, bg=CARD2, padx=12, pady=10)
-        meter_row.pack(fill="x", padx=14, pady=(0, 12))
-        self.meter = tk.Canvas(meter_row, height=28, bg=CARD2, highlightthickness=0)
-        self.meter.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        self.meter.bind("<Configure>", lambda _event: self._draw_meter())
-        self.level_label = tk.Label(meter_row, textvariable=self.level_text, bg=CARD2, fg=MUTED, font=("Segoe UI", 8, "bold"))
-        self.level_label.pack(side="left", padx=(0, 9))
-        tk.Button(meter_row, text="Testar", command=self._test, bg="#29292e", fg=TEXT, activebackground="#37373e", activeforeground=TEXT, relief="flat", padx=13, pady=7, font=("Segoe UI", 9, "bold"), cursor="hand2").pack(side="right")
-        tk.Label(mic, textvariable=self.test_text, bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w", padx=14, pady=(0, 5))
-
-        sensitivity_row = tk.Frame(mic, bg=CARD)
-        sensitivity_row.pack(fill="x", padx=14, pady=(5, 2))
-        tk.Label(sensitivity_row, text="Sensibilidade", bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold")).pack(side="left")
-        self.sensitivity_value = tk.Label(sensitivity_row, text="85", bg=CARD, fg=TEXT, font=("Segoe UI", 10, "bold"))
-        self.sensitivity_value.pack(side="right")
-        self.sensitivity_scale = ttk.Scale(mic, from_=0, to=100, variable=self.gate_sensitivity,
-                                           command=self._sensitivity_changed, style="Mic.Horizontal.TScale")
-        self.sensitivity_scale.pack(fill="x", padx=14, pady=(5, 0))
-        self.sensitivity_ticks = tk.Canvas(mic, height=32, bg=CARD, highlightthickness=0)
-        self.sensitivity_ticks.pack(fill="x", padx=14, pady=(0, 3))
-        self.sensitivity_ticks.bind("<Configure>", lambda _event: self._draw_sensitivity_ticks())
-        tk.Label(mic, textvariable=self.gate_threshold_text, bg=CARD, fg=MUTED, font=("Segoe UI", 8)).pack(anchor="w", padx=14, pady=(0, 11))
-
+        mic = self._card(outer, "NÍVEL DE ENTRADA")
+        tk.Label(mic, text="Microfone do iPhone", bg=CARD, fg=TEXT, font=("Segoe UI Variable Display", 16, "bold")).pack(anchor="w", padx=14, pady=(7, 10))
+        self._slider(mic, "Ganho de voz", self.gain_db, -12, 24, " dB", self._set_gain)
         self._slider(mic, "Ganho automático (máx.)", self.auto_gain_db, 0, 18, " dB", self._set_auto_gain)
+        meter_row = tk.Frame(mic, bg=CARD2, padx=12, pady=11)
+        meter_row.pack(fill="x", padx=14, pady=(8, 12))
+        self.meter = ttk.Progressbar(meter_row, maximum=60, variable=self.level, style="Mic.Horizontal.TProgressbar")
+        self.meter.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        tk.Button(meter_row, text="Testar", command=self._test, bg="#e8e8eb", fg="#151518", activebackground="#ffffff", activeforeground="#151518", relief="flat", padx=15, pady=7, font=("Segoe UI", 9, "bold"), cursor="hand2").pack(side="right")
+        tk.Label(meter_row, textvariable=self.level_text, bg=CARD2, fg=MUTED, font=("Segoe UI", 8, "bold")).pack(side="right", padx=(0, 8))
+        tk.Label(mic, textvariable=self.test_text, bg=CARD, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", padx=14, pady=(0, 12))
+        self._slider(mic, "Corte de fundo (gate)", self.gate_db, -80, -30, " dB", self._set_gate)
+        tk.Label(mic, text="Mais baixo preserva sons fracos • mais alto corta mais ruído, mas pode cortar voz", bg=CARD, fg=MUTED, font=("Segoe UI", 8), wraplength=430, justify="left").pack(fill="x", padx=14, pady=(0, 10))
         self._slider(mic, "Brilho / suavidade", self.treble_db, -8, 3, " dB", self._set_treble)
-        tk.Label(mic, text="O medidor e o corte usam o mesmo dBFS. Abaixo do limite definido, o áudio inteiro é silenciado imediatamente.", bg=CARD, fg=MUTED, font=("Segoe UI", 8), wraplength=460, justify="left").pack(fill="x", padx=14, pady=(0, 10))
+        tk.Label(mic, text="Reduzir alguns dB suaviza agudos e sons de 's'; aumentar devolve brilho.", bg=CARD, fg=MUTED, font=("Segoe UI", 8), wraplength=430, justify="left").pack(fill="x", padx=14, pady=(0, 10))
 
         tk.Label(outer, text="Tratamento", bg=BG, fg=TEXT, font=("Segoe UI Variable Display", 17, "bold")).pack(anchor="w", pady=(3, 2))
         tk.Label(outer, text="Processado localmente no PC", bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 10))
@@ -323,23 +283,14 @@ class MicUSBApp:
     def _enable_taskbar_entry(self):
         # Overrideredirect keeps the custom title bar; APPWINDOW restores the taskbar button.
         try:
-            user32 = ctypes.WinDLL("user32", use_last_error=True)
-            hwnd_type = ctypes.c_void_p
+            hwnd = self.root.winfo_id()
+            user32 = ctypes.windll.user32
             get_style = user32.GetWindowLongPtrW
-            get_style.argtypes = [hwnd_type, ctypes.c_int]
-            get_style.restype = ctypes.c_ssize_t
             set_style = user32.SetWindowLongPtrW
-            set_style.argtypes = [hwnd_type, ctypes.c_int, ctypes.c_ssize_t]
-            set_style.restype = ctypes.c_ssize_t
-            set_pos = user32.SetWindowPos
-            set_pos.argtypes = [hwnd_type, hwnd_type, ctypes.c_int, ctypes.c_int,
-                                ctypes.c_int, ctypes.c_int, ctypes.c_uint]
-            set_pos.restype = ctypes.c_int
-            hwnd = hwnd_type(self.root.winfo_id())
             style = get_style(hwnd, -20)
             style = (style | 0x00040000) & ~0x00000080  # WS_EX_APPWINDOW, not WS_EX_TOOLWINDOW
             set_style(hwnd, -20, style)
-            set_pos(hwnd, None, 0, 0, 0, 0, 0x0027)  # SWP_NOMOVE|NOSIZE|NOZORDER|FRAMECHANGED
+            user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0027)  # SWP_NOMOVE|NOSIZE|NOZORDER|FRAMECHANGED
         except (AttributeError, OSError):
             pass
 
@@ -403,11 +354,6 @@ class MicUSBApp:
     def _initialize(self):
         try:
             self.processor = VoiceProcessor(on_level=lambda db: self.events.put(("level", db)))
-            self.processor.gain_db = self._initial_gain_db
-            self.processor.gate_db = self._initial_gate_db
-            self.processor.auto_gain_max_db = self._initial_auto_gain_db
-            self.processor.treble_db = self._initial_treble_db
-            self.processor.hpf_enabled = self._initial_hpf_enabled
             self.events.put(("status", "Filtro pronto — abra o MicUSB no iPhone"))
             self.forwarder = start_forward()
             self.stream_thread = threading.Thread(target=self._stream_loop, daemon=True)
@@ -443,10 +389,7 @@ class MicUSBApp:
                 pending = b""
                 while self.alive:
                     # Read one 512-sample mono frame (10.7 ms at 48 kHz) at a time.
-                    try:
-                        data = sock.recv(1024)
-                    except socket.timeout:
-                        continue
+                    data = sock.recv(1024)
                     if not data:
                         break
                     data = pending + data
@@ -458,47 +401,6 @@ class MicUSBApp:
     def _set_gain(self, value):
         if self.processor:
             self.processor.gain_db = value
-
-    @staticmethod
-    def sensitivity_to_db(value):
-        # 0 is permissive; 100 closes the gate on much quieter background.
-        return -75.0 + (float(value) / 100.0) * 45.0
-
-    def _volume_changed(self, value):
-        percent = max(0.0, min(200.0, float(value)))
-        self.volume_value.configure(text=f"{percent:.0f}%")
-        self._set_gain(-120.0 if percent <= 0 else 20.0 * math.log10(percent / 100.0))
-
-    def _sensitivity_changed(self, value):
-        sensitivity = max(0.0, min(100.0, float(value)))
-        threshold = self.sensitivity_to_db(sensitivity)
-        self.sensitivity_value.configure(text=f"{sensitivity:.0f}")
-        self.gate_threshold_text.set(f"Abaixo de {threshold:.0f} dBFS: silenciado")
-        self.gate_db.set(threshold)
-        self._set_gate(threshold)
-
-    def _draw_sensitivity_ticks(self):
-        canvas = self.sensitivity_ticks
-        width = max(1, canvas.winfo_width())
-        canvas.delete("all")
-        for value in range(0, 101, 5):
-            x = 4 + (width - 8) * value / 100
-            canvas.create_line(x, 1, x, 6, fill="#898991" if value % 10 == 0 else "#55555c")
-            if value % 5 == 0:
-                canvas.create_text(x, 20, text=str(value), fill=MUTED, font=("Segoe UI", 6), anchor="n")
-
-    def _draw_meter(self):
-        canvas = self.meter
-        width = max(1, canvas.winfo_width())
-        height = max(1, canvas.winfo_height())
-        canvas.delete("all")
-        canvas.create_rectangle(0, 5, width, height - 5, fill="#34343a", outline="")
-        fraction = max(0.0, min(1.0, (self._meter_db + 60.0) / 60.0))
-        position = fraction * width
-        if position > 0:
-            canvas.create_rectangle(0, 5, position, height - 5, fill=ACCENT, outline="")
-        if self._meter_db > -60:
-            canvas.create_line(position, 3, position, height - 3, fill=TEXT, width=2)
 
     def _set_auto_gain(self, value):
         if self.processor:
@@ -552,10 +454,8 @@ class MicUSBApp:
                     for label in self.signal_labels:
                         label.configure(fg="#dedee2" if connected else MUTED)
                 elif kind == "level":
-                    self._meter_db = value
                     self.level.set(max(0, min(60, value + 60)))
                     self.level_text.set(f"{value:.0f} dBFS")
-                    self._draw_meter()
                     if self.processor and self.processor._test_until and time.monotonic() < self.processor._test_until:
                         self.test_text.set("Fale agora por 5 segundos…")
                 elif kind == "error":

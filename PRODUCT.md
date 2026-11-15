@@ -24,7 +24,7 @@ The user runs MicUSB alongside the iPhone app and selects CABLE Output in deskto
 
 ## Capabilities and Constraints
 
-- Controls include microphone gain, automatic gain, a sensitivity-to-dBFS hard gate that silences below-threshold frames, tone softening, DeepFilterNet3 noise reduction, and a low frequency filter.
+- Controls include microphone gain, automatic gain, background gate, tone softening, DeepFilterNet3 noise reduction, and a low frequency filter.
 - iPhone microphone source selection is exposed when iOS provides selectable built-in input sources.
 - Audio is processed locally at 48 kHz mono and routed to VB-Cable.
 - A free Apple developer account may require periodic IPA reinstall through Sideloadly.
