@@ -95,16 +95,18 @@ class VoiceProcessor:
         elif self._test_until and self.test_result is None:
             self.test_result = self._test_peak
             self._test_until = 0.0
-        # Hard threshold: below the displayed dBFS, output is exact silence.
+        with self._lock:
+            clean = self.denoiser.process(y, sr=RATE)
+
+        # Keep the denoiser fed continuously to preserve its stream state.
+        # Apply the hard gate only after processing so silence never freezes
+        # the model and the threshold remains measured against raw input.
         if input_db < self.gate_db:
             self.gate_open = False
             self.gate_gain = 0.0
             self.auto_gain = min(self.auto_gain, 1.0)
             return bytes(len(pcm))
         self.gate_open = True
-
-        with self._lock:
-            clean = self.denoiser.process(y, sr=RATE)
 
         # Broad, gentle high shelf: lowers sharpness while preserving speech presence.
         low = np.empty_like(clean)
@@ -440,7 +442,12 @@ class MicUSBApp:
                 pending = b""
                 while self.alive:
                     # Read one 512-sample mono frame (10.7 ms at 48 kHz) at a time.
-                    data = sock.recv(1024)
+                    try:
+                        data = sock.recv(1024)
+                    except socket.timeout:
+                        # A pause in USB audio is not a disconnect. Keep this
+                        # stream alive; the outer loop reconnects on EOF/errors.
+                        continue
                     if not data:
                         break
                     data = pending + data
