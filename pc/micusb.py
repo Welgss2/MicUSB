@@ -181,9 +181,9 @@ class MicUSBApp:
         self.level_text = tk.StringVar(value="-120 dBFS")
         self.volume_percent = tk.DoubleVar(value=125)
         self.auto_gain_db = tk.DoubleVar(value=18)
-        self.gate_sensitivity = tk.DoubleVar(value=44)
-        self.gate_db = tk.DoubleVar(value=self.sensitivity_to_db(44))
-        self.gate_threshold_text = tk.StringVar(value=f"Abaixo de {self.sensitivity_to_db(44):.0f} dBFS: silenciado")
+        self.gate_sensitivity = tk.DoubleVar(value=0)
+        self.gate_db = tk.DoubleVar(value=self.sensitivity_to_db(0))
+        self.gate_threshold_text = tk.StringVar(value=f"Abaixo de {self.sensitivity_to_db(0):.0f} dBFS: silenciado")
         self._meter_db = -120.0
         self.treble_db = tk.DoubleVar(value=-1.0)
         self.strength = tk.StringVar(value="Natural")
