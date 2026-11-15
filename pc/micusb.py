@@ -36,18 +36,20 @@ class VoiceProcessor:
     def __init__(self, on_level=None):
         self.model = DeepFilterModel(intra_op_num_threads=1)
         self._lock = threading.Lock()
-        self._strength = "TV alta"
-        self._attenuation = {"Natural": 8.0, "Equilibrado": 16.0, "TV alta": 36.0}
+        # Prefer speech fidelity by default; very high attenuation made voices
+        # thin and warbly while still allowing intelligible TV speech through.
+        self._strength = "Equilibrado"
+        self._attenuation = {"Natural": 8.0, "Equilibrado": 16.0, "TV alta": 24.0}
         self.denoiser = self.model.new_stream(atten_lim_db=self._attenuation[self._strength])
         self.gain_db = 0.0
         self.auto_gain_max_db = 12.0
         self.auto_gain = 1.0
         self.limiter_gain = 1.0
-        self.gate_db = -37.7
+        self.gate_db = -55.0
         self.gate_gain = 0.0
         self.gate_open = False
         self.gate_hold_until = 0.0
-        self.treble_db = -2.5
+        self.treble_db = -1.0
         self.tone_lp = 0.0
         self.tone_alpha = 1.0 - math.exp(-2.0 * math.pi * 3600 / RATE)
         self.hpf_enabled = True
@@ -109,15 +111,18 @@ class VoiceProcessor:
             self.test_result = self._test_peak
             self._test_until = 0.0
 
-        if level_db >= self.gate_db:
+        # A lower opening threshold preserves quiet syllables. Once open, use
+        # 3 dB hysteresis and a longer hold to avoid chopping word endings.
+        close_threshold = self.gate_db - 3.0
+        if level_db >= self.gate_db or (self.gate_open and level_db >= close_threshold):
             self.gate_open = True
-            self.gate_hold_until = now + 0.09
+            self.gate_hold_until = now + 0.18
         elif now >= self.gate_hold_until:
             self.gate_open = False
         voice_active = self.gate_open
         target = 1.0 if voice_active else 0.0
         attack = math.exp(-1.0 / (0.005 * RATE))
-        release = math.exp(-1.0 / (0.018 * RATE))
+        release = math.exp(-1.0 / (0.060 * RATE))
         gated = np.empty_like(clean)
         gain = self.gate_gain
         for i, sample in enumerate(clean):
@@ -187,14 +192,14 @@ class MicUSBApp:
         self.stream_thread = None
         self.level = tk.DoubleVar(value=0)
         self.level_text = tk.StringVar(value="-120 dBFS")
-        self.volume_percent = tk.DoubleVar(value=100)
-        self.auto_gain_db = tk.DoubleVar(value=12)
-        self.gate_sensitivity = tk.DoubleVar(value=85)
-        self.gate_db = tk.DoubleVar(value=self.sensitivity_to_db(85))
-        self.gate_threshold_text = tk.StringVar(value=f"Abaixo de {self.sensitivity_to_db(85):.0f} dBFS: silenciado")
+        self.volume_percent = tk.DoubleVar(value=125)
+        self.auto_gain_db = tk.DoubleVar(value=18)
+        self.gate_sensitivity = tk.DoubleVar(value=44)
+        self.gate_db = tk.DoubleVar(value=self.sensitivity_to_db(44))
+        self.gate_threshold_text = tk.StringVar(value=f"Abaixo de {self.sensitivity_to_db(44):.0f} dBFS: silenciado")
         self._meter_db = -120.0
-        self.treble_db = tk.DoubleVar(value=-2.5)
-        self.strength = tk.StringVar(value="TV alta")
+        self.treble_db = tk.DoubleVar(value=-1.0)
+        self.strength = tk.StringVar(value="Equilibrado")
         self.hpf_enabled = tk.BooleanVar(value=True)
         self.echo_enabled = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Iniciando filtro de áudio…")
@@ -285,7 +290,7 @@ class MicUSBApp:
 
         self._slider(mic, "Ganho automático (máx.)", self.auto_gain_db, 0, 18, " dB", self._set_auto_gain)
         self._slider(mic, "Brilho / suavidade", self.treble_db, -8, 3, " dB", self._set_treble)
-        tk.Label(mic, text="A sensibilidade define o limite. O sinal abaixo dele é silenciado; aumente o volume da voz se ela começar a ser cortada.", bg=CARD, fg=MUTED, font=("Segoe UI", 8), wraplength=460, justify="left").pack(fill="x", padx=14, pady=(0, 10))
+        tk.Label(mic, text="Se sua voz for cortada, diminua a Sensibilidade. O ganho aumenta sua voz e o ruído juntos; TV falando pode atravessar o filtro.", bg=CARD, fg=MUTED, font=("Segoe UI", 8), wraplength=460, justify="left").pack(fill="x", padx=14, pady=(0, 10))
 
         tk.Label(outer, text="Tratamento", bg=BG, fg=TEXT, font=("Segoe UI Variable Display", 17, "bold")).pack(anchor="w", pady=(3, 2))
         tk.Label(outer, text="Processado localmente no PC", bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 10))

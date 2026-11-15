@@ -12,7 +12,7 @@ The visual reference is `pc/micusb-reference.png`. The source identity is `pc/br
 
 ## Signal path and copy
 
-The path reads iPhone → USB → MicUSB AI → VB-Cable. The microphone section follows the supplied reference: volume slider, live dBFS meter with a test action, then a numbered sensitivity scale. The sensitivity control maps to a real dBFS gate; signal below that limit is attenuated to digital silence after a short release. Noise reduction is described accurately as DeepFilterNet3 running locally. “Natural”, “Equilibrado”, and “TV alta” describe increasing attenuation, not guaranteed removal of overlapping speech. TV alta is the default when background sound is the primary complaint. Do not claim that multiple physical microphones are mixed or that television speech can always be removed cleanly.
+The path reads iPhone → USB → MicUSB AI → VB-Cable. The microphone section follows the supplied reference: volume slider, live dBFS meter with a test action, then a numbered sensitivity scale. The sensitivity control maps to a real dBFS gate; signal below that limit is attenuated to digital silence with hold and release to avoid chopping syllables. Noise reduction is described accurately as DeepFilterNet3 running locally. “Natural”, “Equilibrado”, and “TV alta” describe increasing attenuation, not guaranteed removal of overlapping speech. Equilibrado is the default to preserve voice quality. Do not claim that multiple physical microphones are mixed or that television speech can always be removed cleanly.
 
 ## Interaction commitments
 
