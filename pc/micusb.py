@@ -36,8 +36,9 @@ class VoiceProcessor:
     def __init__(self, on_level=None):
         self.model = DeepFilterModel(intra_op_num_threads=1)
         self._lock = threading.Lock()
-        # Natural is the lowest artifact setting; stronger modes sound robotic.
-        self._strength = "Natural"
+        # Prefer speech fidelity by default; very high attenuation made voices
+        # thin and warbly while still allowing intelligible TV speech through.
+        self._strength = "Equilibrado"
         self._attenuation = {"Natural": 8.0, "Equilibrado": 16.0, "TV alta": 24.0}
         self.denoiser = self.model.new_stream(atten_lim_db=self._attenuation[self._strength])
         self.gain_db = 0.0
@@ -84,29 +85,8 @@ class VoiceProcessor:
         else:
             y = x
 
-        # Meter and gate share the raw mic signal. Measuring after the AI made
-        # the threshold drift with denoiser gain and could leave noise audible.
-        input_rms = float(np.sqrt(np.mean(y * y) + 1e-20))
-        input_db = max(-120.0, 20.0 * math.log10(max(input_rms, 1e-12)))
-        self.on_level(input_db)
-        now = time.monotonic()
-        if now < self._test_until:
-            self._test_peak = max(self._test_peak, input_db)
-        elif self._test_until and self.test_result is None:
-            self.test_result = self._test_peak
-            self._test_until = 0.0
         with self._lock:
             clean = self.denoiser.process(y, sr=RATE)
-
-        # Keep the denoiser fed continuously to preserve its stream state.
-        # Apply the hard gate only after processing so silence never freezes
-        # the model and the threshold remains measured against raw input.
-        if input_db < self.gate_db:
-            self.gate_open = False
-            self.gate_gain = 0.0
-            self.auto_gain = min(self.auto_gain, 1.0)
-            return bytes(len(pcm))
-        self.gate_open = True
 
         # Broad, gentle high shelf: lowers sharpness while preserving speech presence.
         low = np.empty_like(clean)
@@ -119,7 +99,40 @@ class VoiceProcessor:
         high_gain = 10.0 ** (self.treble_db / 20.0)
         clean = low + (clean - low) * high_gain
 
-        gated = clean
+        rms = float(np.sqrt(np.mean(clean * clean) + 1e-20))
+        # Keep the true floor for the gate. Clamping at -60 dB made a -65 dB
+        # threshold impossible to cross, so the old gate stayed open in silence.
+        level_db = max(-120.0, 20.0 * math.log10(max(rms, 1e-12)))
+        self.on_level(level_db)
+        now = time.monotonic()
+        if now < self._test_until:
+            self._test_peak = max(self._test_peak, level_db)
+        elif self._test_until and self.test_result is None:
+            self.test_result = self._test_peak
+            self._test_until = 0.0
+
+        # A lower opening threshold preserves quiet syllables. Once open, use
+        # 3 dB hysteresis and a longer hold to avoid chopping word endings.
+        close_threshold = self.gate_db - 3.0
+        if level_db >= self.gate_db or (self.gate_open and level_db >= close_threshold):
+            self.gate_open = True
+            self.gate_hold_until = now + 0.18
+        elif now >= self.gate_hold_until:
+            self.gate_open = False
+        voice_active = self.gate_open
+        target = 1.0 if voice_active else 0.0
+        attack = math.exp(-1.0 / (0.005 * RATE))
+        release = math.exp(-1.0 / (0.060 * RATE))
+        gated = np.empty_like(clean)
+        gain = self.gate_gain
+        for i, sample in enumerate(clean):
+            coeff = attack if target > gain else release
+            gain = target + coeff * (gain - target)
+            gated[i] = sample * gain
+        if not voice_active and gain < 0.012:
+            gated.fill(0.0)
+            gain = 0.0
+        self.gate_gain = gain
         # Slow, capped AGC raises quieter speech after denoising; it rests during silence.
         gated_rms = float(np.sqrt(np.mean(gated * gated) + 1e-12))
         auto_target = 1.0
@@ -181,12 +194,12 @@ class MicUSBApp:
         self.level_text = tk.StringVar(value="-120 dBFS")
         self.volume_percent = tk.DoubleVar(value=125)
         self.auto_gain_db = tk.DoubleVar(value=18)
-        self.gate_sensitivity = tk.DoubleVar(value=0)
-        self.gate_db = tk.DoubleVar(value=self.sensitivity_to_db(0))
-        self.gate_threshold_text = tk.StringVar(value=f"Abaixo de {self.sensitivity_to_db(0):.0f} dBFS: silenciado")
+        self.gate_sensitivity = tk.DoubleVar(value=44)
+        self.gate_db = tk.DoubleVar(value=self.sensitivity_to_db(44))
+        self.gate_threshold_text = tk.StringVar(value=f"Abaixo de {self.sensitivity_to_db(44):.0f} dBFS: silenciado")
         self._meter_db = -120.0
         self.treble_db = tk.DoubleVar(value=-1.0)
-        self.strength = tk.StringVar(value="Natural")
+        self.strength = tk.StringVar(value="Equilibrado")
         self.hpf_enabled = tk.BooleanVar(value=True)
         self.echo_enabled = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Iniciando filtro de áudio…")
@@ -277,7 +290,7 @@ class MicUSBApp:
 
         self._slider(mic, "Ganho automático (máx.)", self.auto_gain_db, 0, 18, " dB", self._set_auto_gain)
         self._slider(mic, "Brilho / suavidade", self.treble_db, -8, 3, " dB", self._set_treble)
-        tk.Label(mic, text="O medidor e o gate usam o nível bruto do microfone: abaixo do limite escolhido, a saída é silenciada. Reduza Sensibilidade para aceitar sinais mais baixos.", bg=CARD, fg=MUTED, font=("Segoe UI", 8), wraplength=460, justify="left").pack(fill="x", padx=14, pady=(0, 10))
+        tk.Label(mic, text="Se sua voz for cortada, diminua a Sensibilidade. O ganho aumenta sua voz e o ruído juntos; TV falando pode atravessar o filtro.", bg=CARD, fg=MUTED, font=("Segoe UI", 8), wraplength=460, justify="left").pack(fill="x", padx=14, pady=(0, 10))
 
         tk.Label(outer, text="Tratamento", bg=BG, fg=TEXT, font=("Segoe UI Variable Display", 17, "bold")).pack(anchor="w", pady=(3, 2))
         tk.Label(outer, text="Processado localmente no PC", bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 10))
@@ -445,8 +458,6 @@ class MicUSBApp:
                     try:
                         data = sock.recv(1024)
                     except socket.timeout:
-                        # A pause in USB audio is not a disconnect. Keep this
-                        # stream alive; the outer loop reconnects on EOF/errors.
                         continue
                     if not data:
                         break
